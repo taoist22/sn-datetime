@@ -14,14 +14,13 @@ const DEFAULT_PAGE_WIDTH = 1404;
 const DEFAULT_PAGE_HEIGHT = 1872;
 const PANEL_WIDTH = 480;
 const PANEL_PADDING = 20;
-const BUTTON_MIN_HEIGHT = 88;
+const BUTTON_MIN_HEIGHT = 76;
 const ERROR_DISPLAY_MS = 2500;
 
 // ─── Font size presets ────────────────────────────────────────────────────────
 //
 // boxHeight is the textRect height passed to the API. Supernote sizes the text
-// to fill the box, so boxHeight is the primary lever for visual size. fontSize
-// is also passed; on firmware builds that honour it explicitly, both agree.
+// to fill the box, so boxHeight is the primary lever for visual size.
 
 const FONT_SIZES = [
   {label: 'S', fontSize: 28, boxHeight: 44},
@@ -32,23 +31,29 @@ const FONT_SIZES = [
 
 type FontSizeLabel = (typeof FONT_SIZES)[number]['label'];
 
-// textAlign values (Supernote convention, same as Android gravity):
-// 0 = left, 1 = center, 2 = right
+// textAlign values (Supernote / Android gravity): 0=left, 1=center, 2=right
 const ALIGNS = [
   {label: '←', value: 0},
   {label: '↔', value: 1},
   {label: '→', value: 2},
 ] as const;
 
-const DATE_FORMATS: Array<{label: string; value: DateFormat; example: string}> =
-  [
-    {label: 'Num', value: 'numeric', example: '4/26/2026'},
-    {label: 'Med', value: 'medium', example: 'Apr 26'},
-    {label: 'Long', value: 'long', example: 'April 26'},
-    {label: 'ISO', value: 'iso', example: '2026-04-26'},
-  ];
+const DATE_FORMATS: Array<{label: string; value: DateFormat}> = [
+  {label: 'US', value: 'us'},
+  {label: 'EU', value: 'eu'},
+  {label: 'Med', value: 'medium'},
+  {label: 'Long', value: 'long'},
+  {label: 'ISO', value: 'iso'},
+  {label: 'YMD', value: 'ymd'},
+];
 
-type Position = 'bottom' | 'top';
+type Position = 'bottom' | 'top-left' | 'top-right';
+
+const POSITIONS: Array<{label: string; value: Position}> = [
+  {label: 'Bottom', value: 'bottom'},
+  {label: 'Top Left', value: 'top-left'},
+  {label: 'Top Right', value: 'top-right'},
+];
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -57,9 +62,16 @@ type ApiRes<T> =
   | null
   | undefined;
 
+type PageContext = {
+  width: number;
+  height: number;
+  filePath: string | null;
+  pageNum: number | null;
+};
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async function resolvePageSize(): Promise<{width: number; height: number}> {
+async function resolvePageContext(): Promise<PageContext> {
   try {
     const pathRes = (await PluginCommAPI.getCurrentFilePath()) as ApiRes<string>;
     const pageRes = (await PluginCommAPI.getCurrentPageNum()) as ApiRes<number>;
@@ -69,23 +81,29 @@ async function resolvePageSize(): Promise<{width: number; height: number}> {
       typeof pathRes.result === 'string' &&
       typeof pageRes.result === 'number'
     ) {
+      const filePath = pathRes.result;
+      const pageNum = pageRes.result;
       const sizeRes = (await PluginFileAPI.getPageSize(
-        pathRes.result,
-        pageRes.result,
+        filePath,
+        pageNum,
       )) as ApiRes<{width: number; height: number}>;
-      if (sizeRes?.success && sizeRes.result) {
-        return sizeRes.result;
-      }
+      const size =
+        sizeRes?.success && sizeRes.result
+          ? sizeRes.result
+          : {width: DEFAULT_PAGE_WIDTH, height: DEFAULT_PAGE_HEIGHT};
+      return {...size, filePath, pageNum};
     }
   } catch {
-    // Fall through to defaults
+    // fall through to defaults
   }
-  return {width: DEFAULT_PAGE_WIDTH, height: DEFAULT_PAGE_HEIGHT};
+  return {
+    width: DEFAULT_PAGE_WIDTH,
+    height: DEFAULT_PAGE_HEIGHT,
+    filePath: null,
+    pageNum: null,
+  };
 }
 
-/**
- * Estimate the pixel width needed for `text` at `fontSize`.
- */
 function estimateBoxWidth(
   text: string,
   fontSize: number,
@@ -116,11 +134,16 @@ async function insertStamp(
   let top: number;
   let bottom: number;
 
-  if (position === 'top') {
+  if (position === 'top-right') {
     top = 80;
     bottom = top + boxHeight;
     right = pageWidth - edgeMargin;
     left = right - width;
+  } else if (position === 'top-left') {
+    top = 80;
+    bottom = top + boxHeight;
+    left = 100;
+    right = left + width;
   } else {
     bottom = Math.round(pageHeight - 80);
     top = bottom - boxHeight;
@@ -136,6 +159,9 @@ async function insertStamp(
     }
   }
 
+  const textAlign =
+    position === 'top-right' ? 2 : position === 'top-left' ? 0 : align;
+
   const textRect = {
     left: Math.round(left),
     top: Math.round(top),
@@ -149,7 +175,7 @@ async function insertStamp(
     fontSize,
     textBold: bold ? 1 : 0,
     textItalics: italic ? 1 : 0,
-    textAlign: position === 'top' ? 2 : align,
+    textAlign,
     textEditable: 1,
     showLassoAfterInsert: false,
   });
@@ -160,14 +186,6 @@ async function insertStamp(
   }
 }
 
-// ─── Stamp button config ──────────────────────────────────────────────────────
-
-const STAMP_BUTTONS: Array<{type: StampType; label: string}> = [
-  {type: 'date', label: 'Date'},
-  {type: 'time', label: 'Time'},
-  {type: 'datetime', label: 'Date + Time'},
-];
-
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export const TEST_IDS = {
@@ -175,33 +193,39 @@ export const TEST_IDS = {
   stampBtn: (type: StampType) => `datetime-btn-${type}`,
   toggle: 'datetime-toggle-dayname',
   toggle24h: 'datetime-toggle-24h',
+  toggleKeyword: 'datetime-toggle-keyword',
   sizeBtn: (label: string) => `datetime-size-${label}`,
   boldBtn: 'datetime-bold',
   italicBtn: 'datetime-italic',
   alignBtn: (value: number) => `datetime-align-${value}`,
+  insertBtn: 'datetime-insert',
   error: 'datetime-error',
 } as const;
 
 export default function DateTimePicker() {
+  const [selectedType, setSelectedType] = useState<StampType | null>(null);
   const [includeDayName, setIncludeDayName] = useState(false);
   const [use24Hour, setUse24Hour] = useState(false);
   const [includeSeconds, setIncludeSeconds] = useState(false);
-  const [dateFormat, setDateFormat] = useState<DateFormat>('numeric');
+  const [dateFormat, setDateFormat] = useState<DateFormat>('us');
   const [position, setPosition] = useState<Position>('bottom');
   const [sizeLabel, setSizeLabel] = useState<FontSizeLabel>('M');
   const [bold, setBold] = useState(false);
   const [italic, setItalic] = useState(false);
   const [align, setAlign] = useState(1);
+  const [addAsKeyword, setAddAsKeyword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const insertingRef = useRef(false);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [pageSize, setPageSize] = useState({
+  const [pageContext, setPageContext] = useState<PageContext>({
     width: DEFAULT_PAGE_WIDTH,
     height: DEFAULT_PAGE_HEIGHT,
+    filePath: null,
+    pageNum: null,
   });
 
   useEffect(() => {
-    resolvePageSize().then(setPageSize);
+    resolvePageContext().then(setPageContext);
     return () => {
       if (errorTimerRef.current) {
         clearTimeout(errorTimerRef.current);
@@ -216,62 +240,73 @@ export default function DateTimePicker() {
 
   const previewDate = useMemo(() => new Date(), []);
 
-  const handleStampTap = useCallback(
-    async (type: StampType) => {
-      if (insertingRef.current) {
-        return;
-      }
-      insertingRef.current = true;
-      setError(null);
-      try {
-        const text = formatStamp(
-          new Date(),
-          type,
-          includeDayName,
-          use24Hour,
-          dateFormat,
-          includeSeconds,
-        );
-        await insertStamp(
-          text,
-          sizePreset.fontSize,
-          sizePreset.boxHeight,
-          bold,
-          italic,
-          align,
-          position,
-          pageSize.width,
-          pageSize.height,
-        );
-        PluginManager.closePluginView();
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Insert failed';
-        console.error('[DateTimePicker] insertStamp failed:', msg, e);
-        setError(msg);
-        if (errorTimerRef.current) {
-          clearTimeout(errorTimerRef.current);
+  const handleInsert = useCallback(async () => {
+    if (!selectedType || insertingRef.current) {
+      return;
+    }
+    insertingRef.current = true;
+    setError(null);
+    try {
+      const text = formatStamp(
+        new Date(),
+        selectedType,
+        includeDayName,
+        use24Hour,
+        dateFormat,
+        includeSeconds,
+      );
+      await insertStamp(
+        text,
+        sizePreset.fontSize,
+        sizePreset.boxHeight,
+        bold,
+        italic,
+        align,
+        position,
+        pageContext.width,
+        pageContext.height,
+      );
+      if (
+        addAsKeyword &&
+        pageContext.filePath !== null &&
+        pageContext.pageNum !== null
+      ) {
+        try {
+          await PluginFileAPI.insertKeyWord(
+            pageContext.filePath,
+            pageContext.pageNum,
+            text,
+          );
+        } catch {
+          // keyword registration is best-effort; stamp already inserted
         }
-        errorTimerRef.current = setTimeout(
-          () => setError(null),
-          ERROR_DISPLAY_MS,
-        );
-      } finally {
-        insertingRef.current = false;
       }
-    },
-    [
-      includeDayName,
-      use24Hour,
-      includeSeconds,
-      dateFormat,
-      position,
-      sizePreset,
-      bold,
-      italic,
-      align,
-      pageSize,
-    ],
-  );
+      PluginManager.closePluginView();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Insert failed';
+      console.error('[DateTimePicker] insert failed:', msg, e);
+      setError(msg);
+      if (errorTimerRef.current) {
+        clearTimeout(errorTimerRef.current);
+      }
+      errorTimerRef.current = setTimeout(() => setError(null), ERROR_DISPLAY_MS);
+    } finally {
+      insertingRef.current = false;
+    }
+  }, [
+    selectedType,
+    includeDayName,
+    use24Hour,
+    includeSeconds,
+    dateFormat,
+    position,
+    sizePreset,
+    bold,
+    italic,
+    align,
+    addAsKeyword,
+    pageContext,
+  ]);
 
   const handleClose = useCallback(() => {
     if (!insertingRef.current) {
@@ -307,19 +342,27 @@ export default function DateTimePicker() {
           </View>
         )}
 
-        {/* ── Stamp buttons ── */}
-        <View style={styles.body}>
-          {STAMP_BUTTONS.map(({type, label}, idx) => (
+        {/* ── Selector hint ── */}
+        <View style={styles.selectHintRow}>
+          <Text style={styles.selectHint}>Select stamp type</Text>
+        </View>
+
+        {/* ── Date | Time side by side ── */}
+        <View style={styles.stampRow}>
+          {(['date', 'time'] as StampType[]).map((type, idx) => (
             <React.Fragment key={type}>
-              {idx > 0 && <View style={styles.buttonDivider} />}
+              {idx > 0 && <View style={styles.stampRowDivider} />}
               <Pressable
                 testID={TEST_IDS.stampBtn(type)}
-                style={({pressed}) => [
+                style={[
                   styles.stampBtn,
-                  pressed && styles.stampBtnPressed,
+                  styles.stampBtnHalf,
+                  selectedType === type && styles.stampBtnSelected,
                 ]}
-                onPress={() => handleStampTap(type)}>
-                <Text style={styles.stampBtnLabel}>{label}</Text>
+                onPress={() => setSelectedType(type)}>
+                <Text style={styles.stampBtnLabel}>
+                  {type === 'date' ? 'Date' : 'Time'}
+                </Text>
                 <Text
                   style={[
                     styles.stampBtnPreview,
@@ -339,6 +382,34 @@ export default function DateTimePicker() {
             </React.Fragment>
           ))}
         </View>
+        <View style={styles.buttonDivider} />
+
+        {/* ── Date + Time full width ── */}
+        <Pressable
+          testID={TEST_IDS.stampBtn('datetime')}
+          style={[
+            styles.stampBtn,
+            selectedType === 'datetime' && styles.stampBtnSelected,
+          ]}
+          onPress={() => setSelectedType('datetime')}>
+          <Text style={styles.stampBtnLabel}>{'Date + Time'}</Text>
+          <Text
+            style={[
+              styles.stampBtnPreview,
+              bold && styles.previewBold,
+              italic && styles.previewItalic,
+            ]}>
+            {formatStamp(
+              previewDate,
+              'datetime',
+              includeDayName,
+              use24Hour,
+              dateFormat,
+              includeSeconds,
+            )}
+          </Text>
+        </Pressable>
+
         <View style={styles.divider} />
 
         {/* ── Options ── */}
@@ -350,10 +421,7 @@ export default function DateTimePicker() {
             style={styles.toggleRow}
             onPress={() => setIncludeDayName(v => !v)}>
             <View
-              style={[
-                styles.checkbox,
-                includeDayName && styles.checkboxChecked,
-              ]}>
+              style={[styles.checkbox, includeDayName && styles.checkboxChecked]}>
               {includeDayName && (
                 <Text style={styles.checkmark}>{'✓'}</Text>
               )}
@@ -361,13 +429,12 @@ export default function DateTimePicker() {
             <Text style={styles.toggleLabel}>Include day name</Text>
           </Pressable>
 
-          {/* 24-hour time toggle */}
+          {/* 24-hour toggle */}
           <Pressable
             testID={TEST_IDS.toggle24h}
             style={styles.toggleRow}
             onPress={() => setUse24Hour(v => !v)}>
-            <View
-              style={[styles.checkbox, use24Hour && styles.checkboxChecked]}>
+            <View style={[styles.checkbox, use24Hour && styles.checkboxChecked]}>
               {use24Hour && <Text style={styles.checkmark}>{'✓'}</Text>}
             </View>
             <Text style={styles.toggleLabel}>24-hour time</Text>
@@ -410,27 +477,23 @@ export default function DateTimePicker() {
             </View>
           </View>
 
-          {/* Position chips */}
-          <View style={styles.formatRow}>
-            <Text style={styles.controlGroupLabel}>Position</Text>
-            <View style={styles.controlBtnRow}>
-              {([
-                {label: 'Bottom', value: 'bottom'},
-                {label: 'Top Right', value: 'top'},
-              ] as const).map(p => (
+          {/* Position chips — flex layout so "Top Left" / "Top Right" fit */}
+          <View style={styles.positionSection}>
+            <Text style={styles.positionLabel}>Position</Text>
+            <View style={styles.positionBtnRow}>
+              {POSITIONS.map(p => (
                 <Pressable
                   key={p.value}
                   onPress={() => setPosition(p.value)}
                   style={({pressed}) => [
-                    styles.chipBtn,
-                    styles.chipBtnXWide,
-                    position === p.value && styles.chipBtnSelected,
-                    pressed && styles.chipBtnPressed,
+                    styles.positionChip,
+                    position === p.value && styles.positionChipSelected,
+                    pressed && styles.positionChipPressed,
                   ]}>
                   <Text
                     style={[
-                      styles.chipBtnText,
-                      position === p.value && styles.chipBtnTextSelected,
+                      styles.positionChipText,
+                      position === p.value && styles.positionChipTextSelected,
                     ]}>
                     {p.label}
                   </Text>
@@ -441,10 +504,36 @@ export default function DateTimePicker() {
 
           <View style={styles.optionDivider} />
 
-          {/* Size + style + alignment row */}
+          {/* Align | Size | Style — Align first so it sits visually under Position */}
           <View style={styles.controlRow}>
 
-            {/* Size */}
+            <View style={styles.controlGroup}>
+              <Text style={styles.controlGroupLabel}>Align</Text>
+              <View style={styles.controlBtnRow}>
+                {ALIGNS.map(a => (
+                  <Pressable
+                    key={a.value}
+                    testID={TEST_IDS.alignBtn(a.value)}
+                    onPress={() => setAlign(a.value)}
+                    style={({pressed}) => [
+                      styles.chipBtn,
+                      align === a.value && styles.chipBtnSelected,
+                      pressed && styles.chipBtnPressed,
+                    ]}>
+                    <Text
+                      style={[
+                        styles.chipBtnText,
+                        align === a.value && styles.chipBtnTextSelected,
+                      ]}>
+                      {a.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.controlGroupDivider} />
+
             <View style={styles.controlGroup}>
               <Text style={styles.controlGroupLabel}>Size</Text>
               <View style={styles.controlBtnRow}>
@@ -472,7 +561,6 @@ export default function DateTimePicker() {
 
             <View style={styles.controlGroupDivider} />
 
-            {/* Style (bold / italic) */}
             <View style={styles.controlGroup}>
               <Text style={styles.controlGroupLabel}>Style</Text>
               <View style={styles.controlBtnRow}>
@@ -513,35 +601,45 @@ export default function DateTimePicker() {
               </View>
             </View>
 
-            <View style={styles.controlGroupDivider} />
-
-            {/* Alignment */}
-            <View style={styles.controlGroup}>
-              <Text style={styles.controlGroupLabel}>Align</Text>
-              <View style={styles.controlBtnRow}>
-                {ALIGNS.map(a => (
-                  <Pressable
-                    key={a.value}
-                    testID={TEST_IDS.alignBtn(a.value)}
-                    onPress={() => setAlign(a.value)}
-                    style={({pressed}) => [
-                      styles.chipBtn,
-                      align === a.value && styles.chipBtnSelected,
-                      pressed && styles.chipBtnPressed,
-                    ]}>
-                    <Text
-                      style={[
-                        styles.chipBtnText,
-                        align === a.value && styles.chipBtnTextSelected,
-                      ]}>
-                      {a.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
           </View>
+
+          <View style={styles.optionDivider} />
+
+          {/* Add as keyword toggle */}
+          <Pressable
+            testID={TEST_IDS.toggleKeyword}
+            style={styles.toggleRow}
+            onPress={() => setAddAsKeyword(v => !v)}>
+            <View
+              style={[styles.checkbox, addAsKeyword && styles.checkboxChecked]}>
+              {addAsKeyword && <Text style={styles.checkmark}>{'✓'}</Text>}
+            </View>
+            <Text style={styles.toggleLabel}>Add as keyword</Text>
+          </Pressable>
+
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* ── Insert button ── */}
+        <View style={styles.insertRow}>
+          <Pressable
+            testID={TEST_IDS.insertBtn}
+            onPress={handleInsert}
+            disabled={selectedType === null}
+            style={({pressed}) => [
+              styles.insertBtn,
+              selectedType === null && styles.insertBtnDisabled,
+              pressed && selectedType !== null && styles.insertBtnPressed,
+            ]}>
+            <Text
+              style={[
+                styles.insertBtnText,
+                selectedType === null && styles.insertBtnTextDisabled,
+              ]}>
+              {'Insert'}
+            </Text>
+          </Pressable>
         </View>
 
       </Pressable>
@@ -636,27 +734,51 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
+  // Selector hint
+  selectHintRow: {
+    paddingHorizontal: PANEL_PADDING,
+    paddingTop: 10,
+    paddingBottom: 2,
+  },
+  selectHint: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#888888',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+
   // Stamp buttons
-  body: {
-    paddingVertical: 8,
+  stampRow: {
+    flexDirection: 'row',
+  },
+  stampRowDivider: {
+    width: 1,
+    backgroundColor: '#E0E0E0',
+  },
+  stampBtnHalf: {
+    flex: 1,
   },
   stampBtn: {
-    paddingVertical: 14,
+    paddingVertical: 12,
     paddingHorizontal: PANEL_PADDING,
     minHeight: BUTTON_MIN_HEIGHT,
     justifyContent: 'center',
+    borderLeftWidth: 4,
+    borderLeftColor: 'transparent',
   },
-  stampBtnPressed: {
-    backgroundColor: '#F0F0F0',
+  stampBtnSelected: {
+    backgroundColor: '#DEDEDE',
+    borderLeftColor: '#000000',
   },
   stampBtnLabel: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
     color: '#000000',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   stampBtnPreview: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#555555',
   },
   previewBold: {
@@ -675,7 +797,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: PANEL_PADDING,
-    paddingVertical: 16,
+    paddingVertical: 14,
     gap: 14,
   },
   checkbox: {
@@ -707,11 +829,55 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: PANEL_PADDING,
-    paddingVertical: 12,
+    paddingVertical: 10,
     gap: 12,
   },
 
-  // Size / Style / Align controls
+  // Position section — label stacked above flex chips
+  positionSection: {
+    paddingHorizontal: PANEL_PADDING,
+    paddingTop: 4,
+    paddingBottom: 12,
+    gap: 8,
+  },
+  positionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#888888',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  positionBtnRow: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  positionChip: {
+    flex: 1,
+    height: 36,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: '#CCCCCC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  positionChipSelected: {
+    backgroundColor: '#000000',
+    borderColor: '#000000',
+  },
+  positionChipPressed: {
+    backgroundColor: '#F0F0F0',
+  },
+  positionChipText: {
+    fontSize: 13,
+    color: '#000000',
+    fontWeight: '600',
+  },
+  positionChipTextSelected: {
+    color: '#FFFFFF',
+  },
+
+  // Align / Size / Style controls
   controlRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -748,9 +914,6 @@ const styles = StyleSheet.create({
   chipBtnWide: {
     width: 52,
   },
-  chipBtnXWide: {
-    width: 80,
-  },
   chipBtnSelected: {
     backgroundColor: '#000000',
     borderColor: '#000000',
@@ -771,5 +934,32 @@ const styles = StyleSheet.create({
   },
   chipBtnItalicText: {
     fontStyle: 'italic',
+  },
+
+  // Insert button
+  insertRow: {
+    paddingHorizontal: PANEL_PADDING,
+    paddingVertical: 16,
+  },
+  insertBtn: {
+    backgroundColor: '#000000',
+    borderRadius: 8,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  insertBtnDisabled: {
+    backgroundColor: '#CCCCCC',
+  },
+  insertBtnPressed: {
+    backgroundColor: '#333333',
+  },
+  insertBtnText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  insertBtnTextDisabled: {
+    color: '#888888',
   },
 });

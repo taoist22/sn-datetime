@@ -1,18 +1,19 @@
 # DateTimeStamp for Supernote
 
-A [Supernote](https://supernote.com) plugin that inserts formatted date, time, or date+time stamps into your notes with a single tap.
+A [Supernote](https://supernote.com) plugin that inserts formatted date, time, or date+time stamps into your notes.
 
 ## Features
 
 - **Three stamp types:** Date, Time, or Date + Time
-- **Four date formats:** Numeric (4/26/2026), Medium (Apr 26, 2026), Long (April 26, 2026), ISO (2026-04-26)
+- **Six date formats:** US (4/26/2026), EU (26/04/2026), Medium (Apr 26, 2026), Long (April 26, 2026), ISO (2026-04-26), YMD (20260426)
 - **Optional day name:** e.g. Sunday, April 26, 2026
 - **12 or 24-hour time**
 - **Optional seconds** in time stamps
 - **Font size:** S / M / L / XL
 - **Bold and italic styles**
-- **Alignment:** left, center, or right
-- **Insertion position:** bottom of page (with alignment) or fixed top-right corner
+- **Alignment:** left, center, or right (applies when Position is Bottom)
+- **Insertion position:** Bottom, Top Left, or Top Right
+- **Add as keyword:** also registers the stamp in the Supernote keyword index
 - Stamp is inserted as an editable text element
 
 ## Installation
@@ -25,16 +26,26 @@ A [Supernote](https://supernote.com) plugin that inserts formatted date, time, o
 ## Usage
 
 1. Open a note and tap the **clock icon** in the toolbar.
-2. Set your preferences in the panel:
-   - **Toggles:** Include day name, 24-hour time, Include seconds
-   - **Date format:** Num / Med / Long / ISO
-   - **Position:** Bottom (respects alignment) or Top Right (always upper-right corner)
+2. **Select a stamp type** — tap **Date**, **Time**, or **Date + Time** at the top of the panel. The selected type highlights.
+3. Configure your options:
+   - **Include day name** — prepends the full weekday name to the date
+   - **24-hour time** — switches time display to 24h format
+   - **Include seconds** — adds seconds to time stamps
+   - **Date format:**
+     - *US* — M/D/YYYY (4/26/2026)
+     - *EU* — D/MM/YYYY (26/04/2026)
+     - *Med* — abbreviated month (Apr 26, 2026)
+     - *Long* — full month name (April 26, 2026)
+     - *ISO* — year-first with dashes (2026-04-26)
+     - *YMD* — compact no-separator (20260426) — ideal for keyword search
+   - **Position:** Bottom / Top Left / Top Right
+   - **Align:** ← / ↔ / → (applies when Position is Bottom)
    - **Size:** S / M / L / XL
    - **Style:** Bold (B), Italic (I)
-   - **Align:** ← / ↔ / → (applies when Position is Bottom)
-3. Tap **Date**, **Time**, or **Date + Time** to insert the stamp.
+   - **Add as keyword** — registers the stamp in the Supernote keyword index for that page, making it searchable via the Keywords view
+4. Tap **Insert** to place the stamp and close the panel.
 
-The stamp lands at the chosen position as a text element. You can lasso and move it from there.
+The stamp lands at the chosen position as an editable text element. You can lasso and move it from there.
 
 ## Building from Source
 
@@ -49,7 +60,7 @@ The built plugin will be at `build/outputs/DateTimeStamp.snplg`.
 
 ## Compatibility
 
-Requires Supernote firmware with plugin support. Tested on the Supernote Nomad (A6X2).
+Requires Supernote firmware with plugin support. Tested on Supernote Nomad (A6X2) and Manta (A5X2).
 
 ## License
 
