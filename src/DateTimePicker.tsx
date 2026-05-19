@@ -108,8 +108,12 @@ function estimateBoxWidth(
   text: string,
   fontSize: number,
   pageWidth: number,
+  bold: boolean = false,
 ): number {
-  const estimated = Math.ceil(text.length * fontSize * 0.65 * 1.15);
+  // Bold glyphs render ~15% wider than regular; digit-heavy strings (YMD) also
+  // need extra headroom. Use a higher coefficient for bold to prevent wrapping.
+  const charFactor = bold ? 0.80 : 0.70;
+  const estimated = Math.ceil(text.length * fontSize * charFactor * 1.15);
   const min = fontSize * 4;
   const max = pageWidth - 200;
   return Math.max(min, Math.min(max, estimated));
@@ -127,7 +131,7 @@ async function insertStamp(
   pageHeight: number,
 ): Promise<void> {
   const edgeMargin = 20;
-  const width = estimateBoxWidth(text, fontSize, pageWidth);
+  const width = estimateBoxWidth(text, fontSize, pageWidth, bold);
 
   let left: number;
   let right: number;
