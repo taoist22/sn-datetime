@@ -1,6 +1,6 @@
 {
   "name": "DateTimeStamp",
-  "version": "1.2.0-beta",
+  "version": "1.2.1-beta",
   "description": "Insert date, time, or date+time stamps into your notes with a single tap.",
   "private": true,
   "scripts": {

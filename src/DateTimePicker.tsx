@@ -109,7 +109,7 @@ function estimateBoxWidth(
   fontSize: number,
   pageWidth: number,
 ): number {
-  const estimated = Math.ceil(text.length * fontSize * 0.55 * 1.15);
+  const estimated = Math.ceil(text.length * fontSize * 0.65 * 1.15);
   const min = fontSize * 4;
   const max = pageWidth - 200;
   return Math.max(min, Math.min(max, estimated));
