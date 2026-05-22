@@ -272,6 +272,7 @@ export default function DateTimePicker() {
       );
       if (
         addAsKeyword &&
+        dateFormat !== 'ymd' &&
         pageContext.filePath !== null &&
         pageContext.pageNum !== null
       ) {
@@ -613,12 +614,25 @@ export default function DateTimePicker() {
           <Pressable
             testID={TEST_IDS.toggleKeyword}
             style={styles.toggleRow}
-            onPress={() => setAddAsKeyword(v => !v)}>
+            onPress={dateFormat === 'ymd' ? undefined : () => setAddAsKeyword(v => !v)}>
             <View
-              style={[styles.checkbox, addAsKeyword && styles.checkboxChecked]}>
-              {addAsKeyword && <Text style={styles.checkmark}>{'✓'}</Text>}
+              style={[
+                styles.checkbox,
+                addAsKeyword && dateFormat !== 'ymd' && styles.checkboxChecked,
+                dateFormat === 'ymd' && styles.checkboxDisabled,
+              ]}>
+              {addAsKeyword && dateFormat !== 'ymd' && (
+                <Text style={styles.checkmark}>{'✓'}</Text>
+              )}
             </View>
-            <Text style={styles.toggleLabel}>Add as keyword</Text>
+            <View>
+              <Text style={[styles.toggleLabel, dateFormat === 'ymd' && styles.toggleLabelDisabled]}>
+                Add as keyword
+              </Text>
+              {dateFormat === 'ymd' && (
+                <Text style={styles.toggleNote}>All-digit strings not supported by keyword search</Text>
+              )}
+            </View>
           </Pressable>
 
         </View>
@@ -826,6 +840,18 @@ const styles = StyleSheet.create({
   toggleLabel: {
     fontSize: 19,
     color: '#000000',
+  },
+  toggleLabelDisabled: {
+    color: '#AAAAAA',
+  },
+  toggleNote: {
+    fontSize: 12,
+    color: '#AAAAAA',
+    marginTop: 2,
+  },
+  checkboxDisabled: {
+    borderColor: '#CCCCCC',
+    backgroundColor: '#F5F5F5',
   },
 
   // Date format row
