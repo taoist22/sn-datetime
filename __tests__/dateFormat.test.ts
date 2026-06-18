@@ -1,4 +1,4 @@
-import {formatStamp} from '../src/dateFormat';
+import {formatDateKeyword, formatStamp} from '../src/dateFormat';
 
 // Sunday April 26 2026, 14:30 UTC.
 const FIXED_DATE = new Date('2026-04-26T14:30:00Z');
@@ -89,5 +89,11 @@ describe('formatStamp — datetime', () => {
     const result = formatStamp(FIXED_DATE, 'datetime', true, false, 'long');
     expect(result).toContain('Sunday, April 26, 2026');
     expect(result).toMatch(/\d{1,2}:30/);
+  });
+});
+
+describe('formatDateKeyword', () => {
+  it('returns the compact date search keyword', () => {
+    expect(formatDateKeyword(FIXED_DATE)).toBe('20260426');
   });
 });

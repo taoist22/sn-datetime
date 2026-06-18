@@ -3,6 +3,17 @@ export type DateFormat = 'us' | 'eu' | 'medium' | 'long' | 'iso' | 'ymd';
 
 // ─── Date formatting ──────────────────────────────────────────────────────────
 
+function formatIsoDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function formatYmdDate(date: Date): string {
+  return formatIsoDate(date).replace(/-/g, '');
+}
+
 function formatDate(
   date: Date,
   format: DateFormat,
@@ -13,10 +24,8 @@ function formatDate(
     : undefined;
 
   if (format === 'iso' || format === 'ymd') {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    const compact = format === 'ymd' ? `${y}${m}${d}` : `${y}-${m}-${d}`;
+    const iso = formatIsoDate(date);
+    const compact = format === 'ymd' ? formatYmdDate(date) : iso;
     if (includeDayName) {
       const dayName = new Intl.DateTimeFormat(undefined, {
         weekday: 'long',
@@ -47,6 +56,10 @@ function formatDate(
     month: monthStyle,
     day: 'numeric',
   }).format(date);
+}
+
+export function formatDateKeyword(date: Date): string {
+  return formatYmdDate(date);
 }
 
 // ─── Time formatting ──────────────────────────────────────────────────────────

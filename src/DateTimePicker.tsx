@@ -6,7 +6,7 @@ import {
   View,
 } from 'react-native';
 import {PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI} from 'sn-plugin-lib';
-import {DateFormat, formatStamp, StampType} from './dateFormat';
+import {DateFormat, formatDateKeyword, formatStamp, StampType} from './dateFormat';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -67,6 +67,11 @@ type PageContext = {
   height: number;
   filePath: string | null;
   pageNum: number | null;
+};
+
+type KeyWord = {
+  keyword?: string;
+  page?: number;
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -190,6 +195,40 @@ async function insertStamp(
   }
 }
 
+async function insertDateKeyword(
+  filePath: string,
+  pageNum: number,
+  keyword: string,
+): Promise<void> {
+  try {
+    const existingRes = (await PluginFileAPI.getKeyWords(filePath, [
+      pageNum,
+    ])) as ApiRes<KeyWord[]>;
+    if (
+      existingRes?.success &&
+      existingRes.result?.some(
+        item => item.keyword === keyword && item.page === pageNum,
+      )
+    ) {
+      return;
+    }
+  } catch {
+    // Continue with insertion; duplicate detection is only a courtesy.
+  }
+
+  const res = (await PluginFileAPI.insertKeyWord(
+    filePath,
+    pageNum,
+    keyword,
+  )) as ApiRes<boolean>;
+  if (!res?.success) {
+    console.warn(
+      '[DateTimePicker] keyword indexing failed:',
+      res?.error?.message ?? 'insertKeyWord failed',
+    );
+  }
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export const TEST_IDS = {
@@ -217,19 +256,11 @@ export default function DateTimePicker() {
   const [bold, setBold] = useState(false);
   const [italic, setItalic] = useState(false);
   const [align, setAlign] = useState(1);
-  const [addAsKeyword, setAddAsKeyword] = useState(false);
+  const [addAsKeyword, setAddAsKeyword] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const insertingRef = useRef(false);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [pageContext, setPageContext] = useState<PageContext>({
-    width: DEFAULT_PAGE_WIDTH,
-    height: DEFAULT_PAGE_HEIGHT,
-    filePath: null,
-    pageNum: null,
-  });
-
   useEffect(() => {
-    resolvePageContext().then(setPageContext);
     return () => {
       if (errorTimerRef.current) {
         clearTimeout(errorTimerRef.current);
@@ -243,6 +274,7 @@ export default function DateTimePicker() {
   );
 
   const previewDate = useMemo(() => new Date(), []);
+  const canIndexDate = selectedType !== 'time';
 
   const handleInsert = useCallback(async () => {
     if (!selectedType || insertingRef.current) {
@@ -251,8 +283,10 @@ export default function DateTimePicker() {
     insertingRef.current = true;
     setError(null);
     try {
+      const stampDate = new Date();
+      const contextForInsert = await resolvePageContext();
       const text = formatStamp(
-        new Date(),
+        stampDate,
         selectedType,
         includeDayName,
         use24Hour,
@@ -267,24 +301,20 @@ export default function DateTimePicker() {
         italic,
         align,
         position,
-        pageContext.width,
-        pageContext.height,
+        contextForInsert.width,
+        contextForInsert.height,
       );
       if (
         addAsKeyword &&
-        dateFormat !== 'ymd' &&
-        pageContext.filePath !== null &&
-        pageContext.pageNum !== null
+        selectedType !== 'time' &&
+        contextForInsert.filePath !== null &&
+        contextForInsert.pageNum !== null
       ) {
-        try {
-          await PluginFileAPI.insertKeyWord(
-            pageContext.filePath,
-            pageContext.pageNum,
-            text,
-          );
-        } catch {
-          // keyword registration is best-effort; stamp already inserted
-        }
+        await insertDateKeyword(
+          contextForInsert.filePath,
+          contextForInsert.pageNum,
+          formatDateKeyword(stampDate),
+        );
       }
       PluginManager.closePluginView();
     } catch (e) {
@@ -310,7 +340,6 @@ export default function DateTimePicker() {
     italic,
     align,
     addAsKeyword,
-    pageContext,
   ]);
 
   const handleClose = useCallback(() => {
@@ -614,24 +643,26 @@ export default function DateTimePicker() {
           <Pressable
             testID={TEST_IDS.toggleKeyword}
             style={styles.toggleRow}
-            onPress={dateFormat === 'ymd' ? undefined : () => setAddAsKeyword(v => !v)}>
+            onPress={canIndexDate ? () => setAddAsKeyword(v => !v) : undefined}>
             <View
               style={[
                 styles.checkbox,
-                addAsKeyword && dateFormat !== 'ymd' && styles.checkboxChecked,
-                dateFormat === 'ymd' && styles.checkboxDisabled,
+                addAsKeyword && canIndexDate && styles.checkboxChecked,
+                !canIndexDate && styles.checkboxDisabled,
               ]}>
-              {addAsKeyword && dateFormat !== 'ymd' && (
+              {addAsKeyword && canIndexDate && (
                 <Text style={styles.checkmark}>{'✓'}</Text>
               )}
             </View>
             <View>
-              <Text style={[styles.toggleLabel, dateFormat === 'ymd' && styles.toggleLabelDisabled]}>
-                Add as keyword
+              <Text style={[styles.toggleLabel, !canIndexDate && styles.toggleLabelDisabled]}>
+                Index date for search
               </Text>
-              {dateFormat === 'ymd' && (
-                <Text style={styles.toggleNote}>All-digit strings not supported by keyword search</Text>
-              )}
+              <Text style={styles.toggleNote}>
+                {canIndexDate
+                  ? 'Adds a searchable date tag without changing the stamp'
+                  : 'Time-only stamps do not include a date'}
+              </Text>
             </View>
           </Pressable>
 

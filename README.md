@@ -13,7 +13,7 @@ A [Supernote](https://supernote.com) plugin that inserts formatted date, time, o
 - **Bold and italic styles**
 - **Alignment:** left, center, or right (applies when Position is Bottom)
 - **Insertion position:** Bottom, Top Left, or Top Right
-- **Add as keyword:** also registers the stamp in the Supernote keyword index (not available for YMD format)
+- **Date search indexing:** adds a compact date keyword for date/date-time stamps without changing the visible stamp
 - Stamp is inserted as an editable text element
 
 ## Installation
@@ -42,7 +42,7 @@ A [Supernote](https://supernote.com) plugin that inserts formatted date, time, o
    - **Align:** ← / ↔ / → (applies when Position is Bottom)
    - **Size:** S / M / L / XL
    - **Style:** Bold (B), Italic (I)
-   - **Add as keyword** — registers the stamp in the Supernote keyword index for that page, making it searchable via the Keywords view. Disabled when YMD format is selected (all-digit strings are not supported by keyword search)
+   - **Index date for search** — adds a searchable compact date keyword for date/date-time stamps without changing the visible stamp. The keyword uses `YYYYMMDD`, so native search and date range tools can find it reliably even when the stamp uses another format
 4. Tap **Insert** to place the stamp and close the panel.
 
 The stamp lands at the chosen position as an editable text element. You can lasso and move it from there.
