@@ -2,9 +2,13 @@
   "name": "DateTimeStamp",
   "desc": "Insert date, time, or date+time stamps into your notes with a single tap.",
   "iconPath": "assets/clock.png",
-  "versionName": "1.2.3-beta",
-  "versionCode": "6",
+  "versionName": "1.2.4-beta",
+  "versionCode": "7",
   "pluginID": "n7x2b9fz8qmt3pkl",
   "pluginKey": "DateTimeStamp",
-  "jsMainPath": "index"
+  "jsMainPath": "index",
+  "uses-permissions": [
+    "plugin.permission.FILE:READ",
+    "plugin.permission.FILE:WRITE"
+  ]
 }

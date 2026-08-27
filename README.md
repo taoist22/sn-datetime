@@ -60,7 +60,7 @@ The built plugin will be at `build/outputs/DateTimeStamp.snplg`.
 
 ## Compatibility
 
-Requires Supernote firmware with plugin support. Tested on Supernote Nomad (A6X2) and Manta (A5X2).
+Version 1.2.4-beta requires Plugin Preview Build **Chauvet 3.29.43 Beta** on Manta/Nomad or **Chauvet 2.26.40 Beta** on A5 X/A6 X. The device asks for file access when a stamp or searchable date keyword is first inserted.
 
 ## License
 

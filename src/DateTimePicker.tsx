@@ -7,6 +7,10 @@ import {
 } from 'react-native';
 import {PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI} from 'sn-plugin-lib';
 import {DateFormat, formatDateKeyword, formatStamp, StampType} from './dateFormat';
+import {
+  requireFileReadPermission,
+  requireFileWritePermission,
+} from './pluginPermissions';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -88,10 +92,19 @@ async function resolvePageContext(): Promise<PageContext> {
     ) {
       const filePath = pathRes.result;
       const pageNum = pageRes.result;
-      const sizeRes = (await PluginFileAPI.getPageSize(
-        filePath,
-        pageNum,
-      )) as ApiRes<{width: number; height: number}>;
+      // Placement uses on-screen coordinates, so the new display-size API is
+      // more accurate than document storage dimensions. Retain getPageSize as
+      // a fallback for older plugin-preview firmware.
+      const displaySizeRes = (await PluginCommAPI.getPageDisplaySize()) as ApiRes<{
+        width: number;
+        height: number;
+      }>;
+      const sizeRes = displaySizeRes?.success
+        ? displaySizeRes
+        : ((await PluginFileAPI.getPageSize(
+            filePath,
+            pageNum,
+          )) as ApiRes<{width: number; height: number}>);
       const size =
         sizeRes?.success && sizeRes.result
           ? sizeRes.result
@@ -283,6 +296,13 @@ export default function DateTimePicker() {
     insertingRef.current = true;
     setError(null);
     try {
+      // The toolbar button is registered only for NOTE views. Do not use
+      // canHandwrite here: while this popup is open, current preview firmware
+      // reports the popup itself rather than the editable note beneath it.
+      await requireFileWritePermission();
+      if (addAsKeyword && selectedType !== 'time') {
+        await requireFileReadPermission();
+      }
       const stampDate = new Date();
       const contextForInsert = await resolvePageContext();
       const text = formatStamp(
