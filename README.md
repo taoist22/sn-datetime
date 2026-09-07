@@ -1,5 +1,9 @@
 # DateTimeStamp for Supernote
 
+https://github.com/user-attachments/assets/8b2b860e-0298-4635-9982-864b0c5c8530
+
+
+
 A [Supernote](https://supernote.com) plugin that inserts formatted date, time, or date+time stamps into your notes. Set the format once, then tap the page wherever you want the stamp.
 
 ## Features
