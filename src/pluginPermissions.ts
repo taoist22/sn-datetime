@@ -48,14 +48,18 @@ const ensurePluginPermission = async (
   }
 };
 
-export const requireFileReadPermission = async () => {
-  const allowed = await ensurePluginPermission(
+// Non-throwing: for callers where read access only buys a nicety, so denying
+// it degrades that nicety instead of failing the stamp.
+export const requestFileReadPermission = () =>
+  ensurePluginPermission(
     FILE_READ_PERMISSION,
-    'Allow DateTimeStamp to check existing date keywords in the current note.',
+    'Allow DateTimeStamp to read selected font files and check existing date keywords.',
   );
-  if (!allowed) {
+
+export const requireFileReadPermission = async () => {
+  if (!(await requestFileReadPermission())) {
     throw new Error(
-      'File read access was not allowed. Grant access or turn off date search indexing.',
+      'File read access was not allowed. Grant access to choose a font file.',
     );
   }
 };

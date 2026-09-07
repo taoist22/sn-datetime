@@ -1,16 +1,25 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   Pressable,
+  ScrollView,
+  ToastAndroid,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import {PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI} from 'sn-plugin-lib';
+import {PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI, FileUtils, RattaFileSelector} from 'sn-plugin-lib';
 import {DateFormat, formatDateKeyword, formatStamp, StampType} from './dateFormat';
 import {
+  requestFileReadPermission,
   requireFileReadPermission,
   requireFileWritePermission,
 } from './pluginPermissions';
+
+import {tapRect, type TapPoint} from './tapPlacement';
+import {isFontPath, adjustedSize, heightForSize, MIN_FONT_SIZE, MAX_FONT_SIZE} from './fontOptions';
+import {fontName, FONTS_DIR, MYSTYLE_DIR} from './fontLibrary';
+import {defaults, saveSettings, SHOW_POSITION_PRESETS, type StampSettings} from './settings';
+import PlacementOverlay, {type PlacementRequest, type PlacementResult} from './PlacementOverlay';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -23,8 +32,10 @@ const ERROR_DISPLAY_MS = 2500;
 
 // ─── Font size presets ────────────────────────────────────────────────────────
 //
-// boxHeight is the textRect height passed to the API. Supernote sizes the text
-// to fill the box, so boxHeight is the primary lever for visual size.
+// fontSize is what actually drives the rendered size. boxHeight is passed as
+// the textRect height but insertText does not honour it: the element it creates
+// is a fixed height regardless (measured identical at font 40 and font 72), so
+// these values only affect our own edge clamping, not how the stamp looks.
 
 const FONT_SIZES = [
   {label: 'S', fontSize: 28, boxHeight: 44},
@@ -51,12 +62,13 @@ const DATE_FORMATS: Array<{label: string; value: DateFormat}> = [
   {label: 'YMD', value: 'ymd'},
 ];
 
-type Position = 'bottom' | 'top-left' | 'top-right';
+type Position = 'bottom' | 'top-left' | 'top-right' | 'tap';
 
 const POSITIONS: Array<{label: string; value: Position}> = [
   {label: 'Bottom', value: 'bottom'},
   {label: 'Top Left', value: 'top-left'},
   {label: 'Top Right', value: 'top-right'},
+  {label: 'Tap', value: 'tap'},
 ];
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -147,6 +159,8 @@ async function insertStamp(
   position: Position,
   pageWidth: number,
   pageHeight: number,
+  point?: TapPoint,
+  fontPath?: string | null,
 ): Promise<void> {
   const edgeMargin = 20;
   const width = estimateBoxWidth(text, fontSize, pageWidth, bold);
@@ -182,9 +196,9 @@ async function insertStamp(
   }
 
   const textAlign =
-    position === 'top-right' ? 2 : position === 'top-left' ? 0 : align;
+    position === 'top-right' ? 2 : position === 'top-left' || position === 'tap' ? 0 : align;
 
-  const textRect = {
+  const textRect = point ? tapRect(point, width, boxHeight, pageWidth, pageHeight, fontSize) : {
     left: Math.round(left),
     top: Math.round(top),
     right: Math.round(right),
@@ -193,6 +207,7 @@ async function insertStamp(
 
   const res = await PluginNoteAPI.insertText({
     textContentFull: text,
+    ...(fontPath ? {fontPath} : {}),
     textRect,
     fontSize,
     textBold: bold ? 1 : 0,
@@ -214,16 +229,20 @@ async function insertDateKeyword(
   keyword: string,
 ): Promise<void> {
   try {
-    const existingRes = (await PluginFileAPI.getKeyWords(filePath, [
-      pageNum,
-    ])) as ApiRes<KeyWord[]>;
-    if (
-      existingRes?.success &&
-      existingRes.result?.some(
-        item => item.keyword === keyword && item.page === pageNum,
-      )
-    ) {
-      return;
+    // Reading existing keywords needs FILE:READ, which the stamp itself does
+    // not. Skip the check rather than block indexing when read is refused.
+    if (await requestFileReadPermission()) {
+      const existingRes = (await PluginFileAPI.getKeyWords(filePath, [
+        pageNum,
+      ])) as ApiRes<KeyWord[]>;
+      if (
+        existingRes?.success &&
+        existingRes.result?.some(
+          item => item.keyword === keyword && item.page === pageNum,
+        )
+      ) {
+        return;
+      }
     }
   } catch {
     // Continue with insertion; duplicate detection is only a courtesy.
@@ -254,24 +273,57 @@ export const TEST_IDS = {
   boldBtn: 'datetime-bold',
   italicBtn: 'datetime-italic',
   alignBtn: (value: number) => `datetime-align-${value}`,
-  insertBtn: 'datetime-insert',
   error: 'datetime-error',
 } as const;
 
-export default function DateTimePicker() {
-  const [selectedType, setSelectedType] = useState<StampType | null>(null);
-  const [includeDayName, setIncludeDayName] = useState(false);
-  const [use24Hour, setUse24Hour] = useState(false);
-  const [includeSeconds, setIncludeSeconds] = useState(false);
-  const [dateFormat, setDateFormat] = useState<DateFormat>('us');
-  const [position, setPosition] = useState<Position>('bottom');
-  const [sizeLabel, setSizeLabel] = useState<FontSizeLabel>('M');
-  const [bold, setBold] = useState(false);
-  const [italic, setItalic] = useState(false);
-  const [align, setAlign] = useState(1);
-  const [addAsKeyword, setAddAsKeyword] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export default function DateTimePicker({initialSettings = defaults, autoPlace = false, initialError = null}: {initialSettings?: StampSettings; autoPlace?: boolean; initialError?: string | null}) {
+  const [selectedType, setSelectedType] = useState<StampType | null>(initialSettings.selectedType);
+  const [includeDayName, setIncludeDayName] = useState(initialSettings.includeDayName);
+  const [use24Hour, setUse24Hour] = useState(initialSettings.use24Hour);
+  const [includeSeconds, setIncludeSeconds] = useState(initialSettings.includeSeconds);
+  const [dateFormat, setDateFormat] = useState<DateFormat>(initialSettings.dateFormat);
+  const [position, setPosition] = useState<Position>(initialSettings.position);
+  const [sizeLabel, setSizeLabel] = useState<FontSizeLabel>(initialSettings.sizeLabel);
+  const [bold, setBold] = useState(initialSettings.bold);
+  const [italic, setItalic] = useState(initialSettings.italic);
+  const [align, setAlign] = useState(initialSettings.align);
+  const [addAsKeyword, setAddAsKeyword] = useState(initialSettings.addAsKeyword);
+  const [error, setError] = useState<string | null>(initialError);
+  const [quickPlacement, setQuickPlacement] = useState(initialSettings.quickPlacement);
+  const [fontPath, setFontPath] = useState(initialSettings.fontPath);
+  const [customFontSize, setCustomFontSize] = useState(initialSettings.customFontSize);
+  const [choosingFont, setChoosingFont] = useState(false);
+  const chooseFont = async () => {
+    if (insertingRef.current || choosingFont) {return;}
+    setChoosingFont(true);
+    try {
+      await requireFileReadPermission();
+      const startFolder = await FileUtils.exists(FONTS_DIR) ? FONTS_DIR : MYSTYLE_DIR;
+      const files = await RattaFileSelector.selectFile({selectType: 0, maxNum: 1,
+        needSelectFolder: startFolder, suffixList: ['ttf', 'otf'], title: 'Choose stamp font', rightButtonText: 'Choose'});
+      const selected = files?.[0];
+      if (selected) {
+        if (!isFontPath(selected)) {throw new Error('Choose a .ttf or .otf font file.');}
+        if (!await FileUtils.exists(selected)) {throw new Error('The selected font file is unavailable.');}
+        setFontPath(selected); setError(null);
+      }
+    } catch (e) {setError(e instanceof Error ? e.message : 'Could not choose font.');}
+    finally {setChoosingFont(false);}
+  };
+  const autoStarted = useRef(false);
+  const [settingsVisible, setSettingsVisible] = useState(!autoPlace);
+  const snapshot = (): StampSettings => ({selectedType, includeDayName, use24Hour, includeSeconds,
+    dateFormat, position, sizeLabel, bold, italic, align, addAsKeyword, quickPlacement, fontPath, customFontSize});
+  const handleSave = async () => {
+    if (insertingRef.current || choosingFont) {return;}
+    if (quickPlacement && !selectedType) {setError('Choose a stamp type first.'); return;}
+    insertingRef.current = true;
+    try {await saveSettings(snapshot()); setSettingsVisible(false); PluginManager.closePluginView();}
+    catch {setError('Could not save settings. Please try again.');}
+    finally {insertingRef.current = false;}
+  };
   const insertingRef = useRef(false);
+  const [placement, setPlacement] = useState<PlacementRequest | null>(null);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     return () => {
@@ -282,32 +334,71 @@ export default function DateTimePicker() {
   }, []);
 
   const sizePreset = useMemo(
-    () => FONT_SIZES.find(s => s.label === sizeLabel) ?? FONT_SIZES[1],
-    [sizeLabel],
+    () => customFontSize !== null
+      ? {fontSize: customFontSize, boxHeight: heightForSize(customFontSize)}
+      : FONT_SIZES.find(s => s.label === sizeLabel) ?? FONT_SIZES[1],
+    [sizeLabel, customFontSize],
   );
 
   const previewDate = useMemo(() => new Date(), []);
   const canIndexDate = selectedType !== 'time';
 
-  const handleInsert = useCallback(async () => {
-    if (!selectedType || insertingRef.current) {
+  const handleInsert = useCallback(async (quick = false, typeOverride?: StampType) => {
+    const type = typeOverride ?? selectedType;
+    if (!type || insertingRef.current || choosingFont) {
       return;
     }
     insertingRef.current = true;
     setError(null);
     try {
+      if (!quick) {await saveSettings({...snapshot(), selectedType: type});}
       // The toolbar button is registered only for NOTE views. Do not use
       // canHandwrite here: while this popup is open, current preview firmware
       // reports the popup itself rather than the editable note beneath it.
       await requireFileWritePermission();
-      if (addAsKeyword && selectedType !== 'time') {
+      if (fontPath) {
         await requireFileReadPermission();
+        if (!await FileUtils.exists(fontPath)) {
+          throw new Error('Saved font is unavailable. Choose another font or Default in Settings.');
+        }
+      }
+      let contextForInsert = await resolvePageContext();
+      let point: TapPoint | undefined;
+      if (quick || position === 'tap') {
+        if (!contextForInsert.filePath || contextForInsert.pageNum === null) {
+          throw new Error('Cannot identify the current note page.');
+        }
+        const outcome = await new Promise<PlacementResult>(resolve => {
+          setPlacement({resolve});
+        });
+        // Backing out is not a failure: close the plugin the way the user
+        // expects instead of dropping them into the settings panel.
+        if (outcome.kind === 'cancelled') {
+          setSettingsVisible(false);
+          PluginManager.closePluginView();
+          return;
+        }
+        if (outcome.kind === 'settings') {
+          setSettingsVisible(true);
+          return;
+        }
+        point = outcome.point;
+        // Keep PluginHost foreground through insertion. Closing first can
+        // suspend JS/timers until the user opens the plugin again.
+        const current = await resolvePageContext();
+        if (current.filePath !== contextForInsert.filePath || current.pageNum !== contextForInsert.pageNum ||
+            current.width !== contextForInsert.width || current.height !== contextForInsert.height) {
+          throw new Error('Page or orientation changed. Please try again.');
+        }
+        if (point.x < 0 || point.y < 0 || point.x >= current.width || point.y >= current.height) {
+          throw new Error('Tap was outside the page. Please try again.');
+        }
+        contextForInsert = current;
       }
       const stampDate = new Date();
-      const contextForInsert = await resolvePageContext();
       const text = formatStamp(
         stampDate,
-        selectedType,
+        type,
         includeDayName,
         use24Hour,
         dateFormat,
@@ -323,10 +414,12 @@ export default function DateTimePicker() {
         position,
         contextForInsert.width,
         contextForInsert.height,
+        point,
+        fontPath,
       );
       if (
         addAsKeyword &&
-        selectedType !== 'time' &&
+        type !== 'time' &&
         contextForInsert.filePath !== null &&
         contextForInsert.pageNum !== null
       ) {
@@ -336,16 +429,21 @@ export default function DateTimePicker() {
           formatDateKeyword(stampDate),
         );
       }
+      setSettingsVisible(false);
+      console.log('[DateTimeOverlay] insert complete; closing plugin');
       PluginManager.closePluginView();
     } catch (e) {
+      setSettingsVisible(true);
       const msg = e instanceof Error ? e.message : 'Insert failed';
       console.error('[DateTimePicker] insert failed:', msg, e);
       setError(msg);
+      if (position === 'tap') { ToastAndroid.show(msg, ToastAndroid.LONG); }
       if (errorTimerRef.current) {
         clearTimeout(errorTimerRef.current);
       }
       errorTimerRef.current = setTimeout(() => setError(null), ERROR_DISPLAY_MS);
     } finally {
+      setPlacement(null);
       insertingRef.current = false;
     }
   }, [
@@ -360,24 +458,47 @@ export default function DateTimePicker() {
     italic,
     align,
     addAsKeyword,
+    quickPlacement,
+    sizeLabel,
+    fontPath,
+    customFontSize,
+    choosingFont,
   ]);
+
+  useEffect(() => {
+    if (autoPlace && !autoStarted.current) {
+      autoStarted.current = true;
+      void handleInsert(true);
+    }
+  }, [autoPlace, handleInsert]);
 
   const handleClose = useCallback(() => {
     if (!insertingRef.current) {
+      setSettingsVisible(false);
       PluginManager.closePluginView();
     }
   }, []);
+
+  if (placement) {
+    return <PlacementOverlay request={placement} onSettings={() => placement.resolve({kind: 'settings'})} />;
+  }
+
+  if (!settingsVisible) {
+    return <View testID="datetime-preparing" style={{flex: 1, backgroundColor: 'transparent'}}
+      onStartShouldSetResponder={() => true} />;
+  }
 
   return (
     <Pressable
       testID={TEST_IDS.overlay}
       style={styles.overlay}
       onPress={handleClose}>
-      <Pressable style={styles.panel} onPress={e => e.stopPropagation()}>
+      <Pressable style={[styles.panel, {maxHeight: '95%'}]} onPress={e => e.stopPropagation()}>
+      <ScrollView>
 
         {/* ── Header ── */}
         <View style={styles.header}>
-          <Text style={styles.title}>Insert Stamp</Text>
+          <Text style={styles.title}>DateTime Settings</Text>
           <Pressable
             onPress={handleClose}
             style={({pressed}) => [
@@ -398,7 +519,7 @@ export default function DateTimePicker() {
 
         {/* ── Selector hint ── */}
         <View style={styles.selectHintRow}>
-          <Text style={styles.selectHint}>Select stamp type</Text>
+          <Text style={styles.selectHint}>Tap a stamp, then tap the page</Text>
         </View>
 
         {/* ── Date | Time side by side ── */}
@@ -413,7 +534,7 @@ export default function DateTimePicker() {
                   styles.stampBtnHalf,
                   selectedType === type && styles.stampBtnSelected,
                 ]}
-                onPress={() => setSelectedType(type)}>
+                onPress={() => {setSelectedType(type); void handleInsert(false, type);}}>
                 <Text style={styles.stampBtnLabel}>
                   {type === 'date' ? 'Date' : 'Time'}
                 </Text>
@@ -445,7 +566,7 @@ export default function DateTimePicker() {
             styles.stampBtn,
             selectedType === 'datetime' && styles.stampBtnSelected,
           ]}
-          onPress={() => setSelectedType('datetime')}>
+          onPress={() => {setSelectedType('datetime'); void handleInsert(false, 'datetime');}}>
           <Text style={styles.stampBtnLabel}>{'Date + Time'}</Text>
           <Text
             style={[
@@ -532,133 +653,168 @@ export default function DateTimePicker() {
           </View>
 
           {/* Position chips — flex layout so "Top Left" / "Top Right" fit */}
-          <View style={styles.positionSection}>
-            <Text style={styles.positionLabel}>Position</Text>
-            <View style={styles.positionBtnRow}>
-              {POSITIONS.map(p => (
-                <Pressable
-                  key={p.value}
-                  onPress={() => setPosition(p.value)}
-                  style={({pressed}) => [
-                    styles.positionChip,
-                    position === p.value && styles.positionChipSelected,
-                    pressed && styles.positionChipPressed,
-                  ]}>
-                  <Text
-                    style={[
-                      styles.positionChipText,
-                      position === p.value && styles.positionChipTextSelected,
+          {SHOW_POSITION_PRESETS ? (
+            <View style={styles.positionSection}>
+              <Text style={styles.positionLabel}>{position === 'tap' ? 'Position — Insert, then tap the page' : 'Position'}</Text>
+              <View style={styles.positionBtnRow}>
+                {POSITIONS.map(p => (
+                  <Pressable
+                    key={p.value}
+                    testID={`datetime-position-${p.value}`}
+                    onPress={() => setPosition(p.value)}
+                    style={({pressed}) => [
+                      styles.positionChip,
+                      position === p.value && styles.positionChipSelected,
+                      pressed && styles.positionChipPressed,
                     ]}>
-                    {p.label}
-                  </Text>
-                </Pressable>
-              ))}
+                    <Text
+                      style={[
+                        styles.positionChipText,
+                        position === p.value && styles.positionChipTextSelected,
+                      ]}>
+                      {p.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
-          </View>
+          ) : null}
 
           <View style={styles.optionDivider} />
 
           {/* Align | Size | Style — Align first so it sits visually under Position */}
           <View style={styles.controlRow}>
 
-            <View style={styles.controlGroup}>
-              <Text style={styles.controlGroupLabel}>Align</Text>
-              <View style={styles.controlBtnRow}>
-                {ALIGNS.map(a => (
-                  <Pressable
-                    key={a.value}
-                    testID={TEST_IDS.alignBtn(a.value)}
-                    onPress={() => setAlign(a.value)}
-                    style={({pressed}) => [
-                      styles.chipBtn,
-                      align === a.value && styles.chipBtnSelected,
-                      pressed && styles.chipBtnPressed,
-                    ]}>
-                    <Text
-                      style={[
-                        styles.chipBtnText,
-                        align === a.value && styles.chipBtnTextSelected,
-                      ]}>
-                      {a.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
+            {/* Align only ever applied to the Bottom preset, so it travels
+                with the Position controls. */}
+            {SHOW_POSITION_PRESETS && (
+              <>
+                <View style={styles.controlGroup}>
+                  <Text style={styles.controlGroupLabel}>Align</Text>
+                  <View style={styles.controlBtnRow}>
+                    {ALIGNS.map(a => (
+                      <Pressable
+                        key={a.value}
+                        testID={TEST_IDS.alignBtn(a.value)}
+                        onPress={() => setAlign(a.value)}
+                        style={({pressed}) => [
+                          styles.chipBtn,
+                          align === a.value && styles.chipBtnSelected,
+                          pressed && styles.chipBtnPressed,
+                        ]}>
+                        <Text
+                          style={[
+                            styles.chipBtnText,
+                            align === a.value && styles.chipBtnTextSelected,
+                          ]}>
+                          {a.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
 
-            <View style={styles.controlGroupDivider} />
-
-            <View style={styles.controlGroup}>
-              <Text style={styles.controlGroupLabel}>Size</Text>
-              <View style={styles.controlBtnRow}>
-                {FONT_SIZES.map(s => (
-                  <Pressable
-                    key={s.label}
-                    testID={TEST_IDS.sizeBtn(s.label)}
-                    onPress={() => setSizeLabel(s.label)}
-                    style={({pressed}) => [
-                      styles.chipBtn,
-                      sizeLabel === s.label && styles.chipBtnSelected,
-                      pressed && styles.chipBtnPressed,
-                    ]}>
-                    <Text
-                      style={[
-                        styles.chipBtnText,
-                        sizeLabel === s.label && styles.chipBtnTextSelected,
-                      ]}>
-                      {s.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
-            <View style={styles.controlGroupDivider} />
-
-            <View style={styles.controlGroup}>
-              <Text style={styles.controlGroupLabel}>Style</Text>
-              <View style={styles.controlBtnRow}>
-                <Pressable
-                  testID={TEST_IDS.boldBtn}
-                  onPress={() => setBold(v => !v)}
-                  style={({pressed}) => [
-                    styles.chipBtn,
-                    bold && styles.chipBtnSelected,
-                    pressed && styles.chipBtnPressed,
-                  ]}>
-                  <Text
-                    style={[
-                      styles.chipBtnText,
-                      styles.chipBtnBoldText,
-                      bold && styles.chipBtnTextSelected,
-                    ]}>
-                    {'B'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  testID={TEST_IDS.italicBtn}
-                  onPress={() => setItalic(v => !v)}
-                  style={({pressed}) => [
-                    styles.chipBtn,
-                    italic && styles.chipBtnSelected,
-                    pressed && styles.chipBtnPressed,
-                  ]}>
-                  <Text
-                    style={[
-                      styles.chipBtnText,
-                      styles.chipBtnItalicText,
-                      italic && styles.chipBtnTextSelected,
-                    ]}>
-                    {'I'}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
+                <View style={styles.controlGroupDivider} />
+              </>
+            )}
 
           </View>
 
           <View style={styles.optionDivider} />
 
+          {/* Font, size and style together — they all describe the same text,
+              and size in particular used to appear twice in two places. */}
+          <View style={styles.fontSection}>
+          <Text style={styles.controlGroupLabel}>Font</Text>
+          <Text style={styles.selectedFont} numberOfLines={2}>
+            {fontPath ? fontName(fontPath) : 'Default Supernote font'}
+          </Text>
+
+          {/* The native file selector already presents a scrollable list of
+              fonts, so it is opened directly rather than behind our own list. */}
+          <View style={styles.controlBtnRow}>
+            <Pressable testID="datetime-font-default" accessibilityState={{selected: !fontPath}} style={[styles.fontButton, !fontPath && styles.fontButtonSelected]} onPress={() => setFontPath(null)}>
+              <Text style={[styles.closeText, !fontPath && styles.fontButtonSelectedText]}>{!fontPath ? '✓ Default' : 'Default'}</Text>
+            </Pressable>
+            <Pressable testID="datetime-font-choose" disabled={choosingFont} accessibilityState={{selected: !!fontPath}} style={[styles.fontButton, !!fontPath && styles.fontButtonSelected]} onPress={chooseFont}>
+              <Text style={[styles.closeText, !!fontPath && styles.fontButtonSelectedText]}>{choosingFont ? 'Choosing…' : fontPath ? '✓ Change font' : 'Choose font'}</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.toggleNote}>Copy .ttf or .otf fonts into MyStyle/Fonts, then choose a file.</Text>
+
+          {/* Presets and the fine dial are one control, so they share a line:
+              the chips jump to a preset, − / + nudge from wherever you are. */}
+          <Text style={[styles.controlGroupLabel, styles.fontSubLabel]}>Size</Text>
+          <View style={[styles.controlBtnRow, styles.sizeRow]}>
+            {FONT_SIZES.map(s => (
+              <Pressable
+                key={s.label}
+                testID={TEST_IDS.sizeBtn(s.label)}
+                onPress={() => {setSizeLabel(s.label); setCustomFontSize(null);}}
+                style={({pressed}) => [
+                  styles.chipBtn,
+                  customFontSize === null && sizeLabel === s.label && styles.chipBtnSelected,
+                  pressed && styles.chipBtnPressed,
+                ]}>
+                <Text
+                  style={[
+                    styles.chipBtnText,
+                    customFontSize === null && sizeLabel === s.label && styles.chipBtnTextSelected,
+                  ]}>
+                  {s.label}
+                </Text>
+              </Pressable>
+            ))}
+            <View style={styles.sizeSpacer} />
+            <Pressable testID="datetime-size-minus" disabled={sizePreset.fontSize <= MIN_FONT_SIZE} style={styles.dialButton}
+              onPress={() => setCustomFontSize(adjustedSize(sizePreset.fontSize, -2))}>
+              <Text style={styles.closeText}>−</Text>
+            </Pressable>
+            <Text style={styles.dialValue}>{sizePreset.fontSize}</Text>
+            <Pressable testID="datetime-size-plus" disabled={sizePreset.fontSize >= MAX_FONT_SIZE} style={styles.dialButton}
+              onPress={() => setCustomFontSize(adjustedSize(sizePreset.fontSize, 2))}>
+              <Text style={styles.closeText}>+</Text>
+            </Pressable>
+          </View>
+
+          <Text style={[styles.controlGroupLabel, styles.fontSubLabel]}>Style</Text>
+          <View style={styles.controlBtnRow}>
+            <Pressable
+              testID={TEST_IDS.boldBtn}
+              onPress={() => setBold(v => !v)}
+              style={({pressed}) => [
+                styles.chipBtn,
+                bold && styles.chipBtnSelected,
+                pressed && styles.chipBtnPressed,
+              ]}>
+              <Text
+                style={[
+                  styles.chipBtnText,
+                  styles.chipBtnBoldText,
+                  bold && styles.chipBtnTextSelected,
+                ]}>
+                {'B'}
+              </Text>
+            </Pressable>
+            <Pressable
+              testID={TEST_IDS.italicBtn}
+              onPress={() => setItalic(v => !v)}
+              style={({pressed}) => [
+                styles.chipBtn,
+                italic && styles.chipBtnSelected,
+                pressed && styles.chipBtnPressed,
+              ]}>
+              <Text
+                style={[
+                  styles.chipBtnText,
+                  styles.chipBtnItalicText,
+                  italic && styles.chipBtnTextSelected,
+                ]}>
+                {'I'}
+              </Text>
+            </Pressable>
+          </View>
+          </View>
           {/* Add as keyword toggle */}
           <Pressable
             testID={TEST_IDS.toggleKeyword}
@@ -690,27 +846,14 @@ export default function DateTimePicker() {
 
         <View style={styles.divider} />
 
-        {/* ── Insert button ── */}
-        <View style={styles.insertRow}>
-          <Pressable
-            testID={TEST_IDS.insertBtn}
-            onPress={handleInsert}
-            disabled={selectedType === null}
-            style={({pressed}) => [
-              styles.insertBtn,
-              selectedType === null && styles.insertBtnDisabled,
-              pressed && selectedType !== null && styles.insertBtnPressed,
-            ]}>
-            <Text
-              style={[
-                styles.insertBtnText,
-                selectedType === null && styles.insertBtnTextDisabled,
-              ]}>
-              {'Insert'}
-            </Text>
-          </Pressable>
-        </View>
-
+        <Pressable testID="datetime-quick" style={[styles.toggleRow, styles.quickRow]} onPress={() => setQuickPlacement(v => !v)}>
+          <Text style={styles.toggleLabel}>{quickPlacement ? '☑' : '☐'} Quick placement on toolbar tap</Text>
+        </Pressable>
+        <Text style={[styles.toggleNote, styles.quickNote]}>Save once, then tap the toolbar icon and the page.</Text>
+        <Pressable testID="datetime-save" style={styles.saveBtn} onPress={handleSave}>
+          <Text style={styles.closeText}>Save settings</Text>
+        </Pressable>
+            </ScrollView>
       </Pressable>
     </Pressable>
   );
@@ -747,6 +890,19 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#000000',
   },
+  fontSection: {paddingHorizontal: PANEL_PADDING, paddingVertical: 12},
+  fontSubLabel: {marginTop: 16, marginBottom: 8},
+  sizeRow: {alignItems: 'center'},
+  sizeSpacer: {flex: 1, minWidth: 12},
+  dialButton: {minWidth: 44, minHeight: 40, paddingHorizontal: 12, borderWidth: 1, borderRadius: 6, justifyContent: 'center', alignItems: 'center'},
+  dialValue: {fontSize: 18, fontWeight: 'bold', color: '#000000', minWidth: 34, textAlign: 'center'},
+  selectedFont: {fontSize: 18, fontWeight: 'bold', color: '#000000', marginTop: 6, marginBottom: 12},
+  fontButtonSelected: {backgroundColor: '#000000'},
+  fontButtonSelectedText: {color: '#FFFFFF'},
+  fontButton: {minHeight: 44, paddingHorizontal: 16, borderWidth: 1, borderRadius: 6, justifyContent: 'center', alignItems: 'center'},
+  // Sized to its label and lifted clear of the panel border: with Insert gone
+  // this is the last element in the scroll view, so it needs its own bottom gap.
+  saveBtn: {alignSelf: 'center', marginTop: 16, marginBottom: 24, minHeight: 44, paddingHorizontal: 32, borderWidth: 1.5, borderRadius: 6, alignItems: 'center', justifyContent: 'center'},
   closeBtn: {
     position: 'absolute',
     right: PANEL_PADDING,
@@ -900,6 +1056,15 @@ const styles = StyleSheet.create({
     color: '#AAAAAA',
     marginTop: 2,
   },
+  // The note sits between an inset toggle row and the inset Save button, so it
+  // needs the same horizontal inset to line up with both.
+  quickRow: {
+    paddingBottom: 2,
+  },
+  quickNote: {
+    paddingHorizontal: PANEL_PADDING,
+    marginTop: 0,
+  },
   checkboxDisabled: {
     borderColor: '#CCCCCC',
     backgroundColor: '#F5F5F5',
@@ -1018,29 +1183,4 @@ const styles = StyleSheet.create({
   },
 
   // Insert button
-  insertRow: {
-    paddingHorizontal: PANEL_PADDING,
-    paddingVertical: 16,
-  },
-  insertBtn: {
-    backgroundColor: '#000000',
-    borderRadius: 8,
-    paddingVertical: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  insertBtnDisabled: {
-    backgroundColor: '#CCCCCC',
-  },
-  insertBtnPressed: {
-    backgroundColor: '#333333',
-  },
-  insertBtnText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  insertBtnTextDisabled: {
-    color: '#888888',
-  },
 });
