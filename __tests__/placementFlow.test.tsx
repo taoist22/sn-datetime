@@ -121,3 +121,58 @@ it('places straight from the stamp button, with no separate insert step', async 
   expect(PluginManager.closePluginView).toHaveBeenCalledTimes(1);
   act(() => tree.unmount());
 });
+
+it('passes a custom date pattern through preview and insertion', async () => {
+  jest.clearAllMocks();
+  const {defaults} = require('../src/settings');
+  (PluginNoteAPI.insertText as jest.Mock).mockResolvedValue({success: true});
+  let tree!: TestRenderer.ReactTestRenderer;
+  await act(async () => {tree = TestRenderer.create(<DateTimePicker initialSettings={{
+    ...defaults, dateFormat: 'custom', customPattern: 'yyyy.MM.dd',
+  }} />);});
+  expect(tree.root.findByProps({testID: TEST_IDS.customPattern}).props.value).toBe('yyyy.MM.dd');
+  const stamp = tree.root.findAllByType(Pressable).find(n => n.props.testID === TEST_IDS.stampBtn('date'))!;
+  let insertion!: Promise<void>;
+  await act(async () => {insertion = stamp.props.onPress();});
+  await act(async () => {tree.root.findByType(PlacementOverlay).props.request.resolve({kind: 'placed', point: {x: 200, y: 300}});});
+  await act(async () => {await insertion;});
+  expect(PluginNoteAPI.insertText).toHaveBeenCalledWith(expect.objectContaining({
+    textContentFull: expect.stringMatching(/^\d{4}\.\d{2}\.\d{2}$/),
+  }));
+  act(() => tree.unmount());
+});
+
+it('keeps day name and configured time when Date + Time uses a custom date pattern', async () => {
+  jest.clearAllMocks();
+  const {defaults} = require('../src/settings');
+  (PluginNoteAPI.insertText as jest.Mock).mockResolvedValue({success: true});
+  let tree!: TestRenderer.ReactTestRenderer;
+  await act(async () => {tree = TestRenderer.create(<DateTimePicker initialSettings={{
+    ...defaults, dateFormat: 'custom', customPattern: 'dd.MM.yy', includeDayName: true,
+    use24Hour: true, includeSeconds: true,
+  }} />);});
+  const stamp = tree.root.findAllByType(Pressable).find(n => n.props.testID === TEST_IDS.stampBtn('datetime'))!;
+  let insertion!: Promise<void>;
+  await act(async () => {insertion = stamp.props.onPress();});
+  await act(async () => {tree.root.findByType(PlacementOverlay).props.request.resolve({kind: 'placed', point: {x: 200, y: 300}});});
+  await act(async () => {await insertion;});
+  expect(PluginNoteAPI.insertText).toHaveBeenCalledWith(expect.objectContaining({
+    textContentFull: expect.stringMatching(/^[^,]+, \d{2}\.\d{2}\.\d{2}  \d{2}:\d{2}:\d{2}$/),
+  }));
+  act(() => tree.unmount());
+});
+
+it('blocks an invalid custom pattern before opening placement', async () => {
+  jest.clearAllMocks();
+  const {defaults} = require('../src/settings');
+  let tree!: TestRenderer.ReactTestRenderer;
+  await act(async () => {tree = TestRenderer.create(<DateTimePicker initialSettings={{
+    ...defaults, dateFormat: 'custom', customPattern: 'dd.MM.yyyyy',
+  }} />);});
+  const stamp = tree.root.findAllByType(Pressable).find(n => n.props.testID === TEST_IDS.stampBtn('date'))!;
+  await act(async () => {await stamp.props.onPress();});
+  expect(tree.root.findAllByType(PlacementOverlay)).toHaveLength(0);
+  expect(PluginNoteAPI.insertText).not.toHaveBeenCalled();
+  expect(tree.root.findByProps({testID: TEST_IDS.error}).props.children).toBeTruthy();
+  act(() => tree.unmount());
+});

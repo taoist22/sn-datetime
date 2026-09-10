@@ -1,9 +1,9 @@
 import {isFontPath, MIN_FONT_SIZE, MAX_FONT_SIZE} from './fontOptions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {type DateFormat, type StampType} from './dateFormat';
+import {DEFAULT_CUSTOM_PATTERN, validateCustomPattern, type DateFormat, type StampType} from './dateFormat';
 export type StampSettings = {
   selectedType: StampType | null; includeDayName: boolean; use24Hour: boolean;
-  includeSeconds: boolean; dateFormat: DateFormat;
+  includeSeconds: boolean; dateFormat: DateFormat; customPattern: string;
   position: 'bottom' | 'top-left' | 'top-right' | 'tap';
   sizeLabel: 'S' | 'M' | 'L' | 'XL'; bold: boolean; italic: boolean;
   fontPath: string | null; customFontSize: number | null;
@@ -15,7 +15,7 @@ export type StampSettings = {
 export const SHOW_POSITION_PRESETS = false;
 
 export const defaults: StampSettings = {selectedType: null, includeDayName: false, use24Hour: false,
-  includeSeconds: false, dateFormat: 'us', position: 'tap', sizeLabel: 'M', bold: false,
+  includeSeconds: false, dateFormat: 'us', customPattern: DEFAULT_CUSTOM_PATTERN, position: 'tap', sizeLabel: 'M', bold: false,
   italic: false, align: 1, addAsKeyword: true, quickPlacement: false, fontPath: null, customFontSize: null};
 const KEY = 'datetimestamp.settings.v1';
 export function normalizeSettings(value: unknown): StampSettings {
@@ -25,11 +25,14 @@ export function normalizeSettings(value: unknown): StampSettings {
   for (const key of ['includeDayName', 'use24Hour', 'includeSeconds', 'bold', 'italic', 'addAsKeyword', 'quickPlacement'] as const) {
     if (typeof input[key] === 'boolean') { result[key] = input[key] as boolean; }
   }
-  const choices = {selectedType: ['date','time','datetime'], dateFormat: ['us','eu','medium','long','iso','ymd'], position: ['bottom','top-left','top-right','tap'], sizeLabel: ['S','M','L','XL'], align: [0,1,2]};
+  const choices = {selectedType: ['date','time','datetime'], dateFormat: ['us','eu','medium','long','iso','ymd','custom'], position: ['bottom','top-left','top-right','tap'], sizeLabel: ['S','M','L','XL'], align: [0,1,2]};
   for (const key of Object.keys(choices) as (keyof typeof choices)[]) {
     if ((choices[key] as unknown[]).includes(input[key])) { Object.assign(result, {[key]: input[key]}); }
   }
   if (isFontPath(input.fontPath)) {result.fontPath = input.fontPath;}
+  if (typeof input.customPattern === 'string' && !validateCustomPattern(input.customPattern)) {
+    result.customPattern = input.customPattern;
+  }
   if (typeof input.customFontSize === 'number' && Number.isInteger(input.customFontSize) &&
       input.customFontSize >= MIN_FONT_SIZE && input.customFontSize <= MAX_FONT_SIZE) {
     result.customFontSize = input.customFontSize;

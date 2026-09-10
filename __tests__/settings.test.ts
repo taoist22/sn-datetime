@@ -22,3 +22,13 @@ it('keeps legacy presets and validates new font settings', async () => {
   await saveSettings(settings);
   expect(await loadSettings()).toEqual(settings);
 });
+
+it('persists valid custom patterns and repairs invalid saved patterns', async () => {
+  const settings = {...defaults, dateFormat: 'custom' as const, customPattern: 'dd/MM/yy'};
+  await saveSettings(settings);
+  expect(await loadSettings()).toEqual(settings);
+  expect(normalizeSettings({dateFormat: 'custom', customPattern: 'dd.MM.yyyyy'})).toEqual({
+    ...defaults,
+    dateFormat: 'custom',
+  });
+});

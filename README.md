@@ -9,7 +9,8 @@ A [Supernote](https://supernote.com) plugin that inserts formatted date, time, o
 ## Features
 
 - **Three stamp types:** Date, Time, or Date + Time
-- **Six date formats:** US (4/26/2026), EU (26/04/2026), Medium (Apr 26, 2026), Long (April 26, 2026), ISO (2026-04-26), YMD (20260426)
+- **Six neutral date presets:** MDY (4/26/2026), DMY (26/04/2026), Medium (Apr 26, 2026), Long (April 26, 2026), ISO (2026-04-26), YMD (20260426)
+- **Custom date patterns:** choose the year length, separator, month style, weekday, and literal text with a live preview
 - **Optional day name:** e.g. Sunday, April 26, 2026
 - **12 or 24-hour time**, with optional seconds
 - **Tap placement:** the stamp lands on the line you tap
@@ -50,18 +51,29 @@ Placement takes a single tap. Drags and long presses are ignored, so you will no
 - **24-hour time** — switches time display to 24h format
 - **Include seconds** — adds seconds to time stamps
 - **Date format:**
-  - *US* — M/D/YYYY (4/26/2026)
-  - *EU* — D/MM/YYYY (26/04/2026)
+  - *MDY* — M/D/YYYY (4/26/2026)
+  - *DMY* — D/MM/YYYY (26/04/2026)
   - *Med* — abbreviated month (Apr 26, 2026)
   - *Long* — full month name (April 26, 2026)
   - *ISO* — year-first with dashes (2026-04-26)
   - *YMD* — compact, no separators (20260426)
+  - *Custom* — enter a pattern such as `dd.MM.yy`, `yyyy/MM/dd`, or `dddd, MMMM d, yyyy`; the panel shows a live preview
 - **Font** — Default, or a `.ttf` / `.otf` file of your own; see [Fonts](#fonts)
 - **Size** — S / M / L / XL, or the **− / +** controls for any size from 16 to 96. Choosing a preset clears the fine adjustment.
 - **Style** — Bold (B), Italic (I)
 - **Index date for search** — adds a searchable `YYYYMMDD` keyword to the page for date and date+time stamps, without changing what the stamp looks like. Native search and date-range tools find it even when the stamp uses another format. Unavailable for time-only stamps, which have no date to index.
 
 Settings are saved when you place a stamp or press **Save settings**, and are reused next time. Closing the panel without either discards your changes.
+
+### Custom date patterns
+
+Select **Custom** in the Date row, then enter a date pattern. Supported tokens are `M`, `MM`, `MMM`, `MMMM`, `d`, `dd`, `ddd`, `dddd`, `yy`, and `yyyy`. Separators such as `/`, `.`, and `-` can be typed directly. Put words inside single quotes, for example `MMMM d, yyyy 'reviewed'`.
+
+The pattern controls the date portion of Date and Date + Time stamps. Date + Time always appends the time according to the 12/24-hour and seconds settings. **Include day name** prepends the device-locale weekday unless the custom pattern already contains `ddd` or `dddd`. Time-only stamps continue to use the standard time controls. Invalid tokens are shown in the preview and must be fixed before settings can be saved or a stamp placed. The last valid custom pattern remains saved when you switch to a preset.
+
+Names are provided by the device locale. Tokens such as `ddd`, `dddd`, `MMM`, and `MMMM` therefore follow the language configured on the Supernote. The plugin does not offer a separate language override. A device configured in English can still use a locally preferred numeric structure such as `dd.MM.yyyy`, while weekday and month names remain English.
+
+Search indexing remains `YYYYMMDD` regardless of the visible date format.
 
 ## Quick placement
 
@@ -108,6 +120,14 @@ Requires Plugin Preview Build **Chauvet 3.29.44 Beta** on Manta / Nomad, or **Ch
 MIT
 
 ## Changelog
+
+### 1.6.0-beta
+
+- Renamed the regional presets to neutral MDY and DMY labels.
+- Added saved custom date patterns with a live preview, arbitrary separators, two- or four-digit years, device-locale weekday and month names, and quoted literal text.
+- Custom formatting changes only the visible stamp; date search indexing remains `YYYYMMDD`.
+- Fixed **Include day name** for Custom patterns while avoiding duplicate weekday output.
+- Fixed Date + Time so it always appends the configured time when Custom is selected.
 
 ### 1.5.0-beta
 

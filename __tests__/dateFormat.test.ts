@@ -1,7 +1,8 @@
-import {formatDateKeyword, formatStamp} from '../src/dateFormat';
+import {formatCustomStamp, formatDateKeyword, formatStamp, validateCustomPattern} from '../src/dateFormat';
 
 // Sunday April 26 2026, 14:30 UTC.
 const FIXED_DATE = new Date('2026-04-26T14:30:00Z');
+const FIXED_LOCAL_TIME = new Date(2026, 3, 26, 14, 30, 5);
 
 // Pass explicit locales through; default undefined to en-US for consistency.
 const enUS = 'en-US';
@@ -28,6 +29,30 @@ describe('formatStamp — date formats', () => {
 
   it('eu: D/MM/YYYY', () => {
     expect(formatStamp(FIXED_DATE, 'date', false, false, 'eu')).toBe('26/04/2026');
+  });
+
+  it('custom: supports two-digit years and arbitrary separators', () => {
+    expect(formatStamp(FIXED_DATE, 'date', false, false, 'custom', false, 'dd.MM.yy')).toBe('26.04.26');
+    expect(formatCustomStamp(FIXED_DATE, 'yyyy/MM/dd')).toBe('2026/04/26');
+    expect(formatStamp(FIXED_LOCAL_TIME, 'datetime', false, true, 'custom', false, 'dd.MM.yy')).toBe('26.04.26  14:30');
+  });
+
+  it('custom: supports month, weekday, and quoted literal text', () => {
+    expect(formatCustomStamp(FIXED_DATE, "dddd, MMMM d, yyyy 'at noon'")).toBe('Sunday, April 26, 2026 at noon');
+  });
+
+  it('custom: Include day name uses the device locale without duplicating a weekday token', () => {
+    expect(formatStamp(FIXED_DATE, 'date', true, false, 'custom', false, 'dd.MM.yyyy')).toBe('Sunday, 26.04.2026');
+    expect(formatStamp(FIXED_DATE, 'date', true, false, 'custom', false, 'dddd, dd.MM.yyyy')).toBe('Sunday, 26.04.2026');
+    expect(formatStamp(FIXED_DATE, 'date', true, false, 'custom', false, "dd.MM.yyyy 'dddd'")).toBe('Sunday, 26.04.2026 dddd');
+  });
+
+  it('custom: rejects unsupported tokens and incomplete quotes', () => {
+    expect(validateCustomPattern('dd.MM.yyyyy')).toBe('Unsupported token: y');
+    expect(validateCustomPattern('dd.MM.yyyy HH:mm')).toBe('Unsupported token: H');
+    expect(validateCustomPattern("dd 'unfinished")).toContain('Close');
+    expect(validateCustomPattern('...')).toBe('Include at least one supported token.');
+    expect(() => formatCustomStamp(FIXED_DATE, 'dd.QQ.yyyy')).toThrow('Unsupported token: Q');
   });
 
   it('medium: abbreviated month', () => {

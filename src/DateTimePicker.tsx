@@ -5,10 +5,11 @@ import {
   ToastAndroid,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import {PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI, FileUtils, RattaFileSelector} from 'sn-plugin-lib';
-import {DateFormat, formatDateKeyword, formatStamp, StampType} from './dateFormat';
+import {DateFormat, DEFAULT_CUSTOM_PATTERN, formatDateKeyword, formatStamp, StampType, validateCustomPattern} from './dateFormat';
 import {
   requestFileReadPermission,
   requireFileReadPermission,
@@ -54,12 +55,13 @@ const ALIGNS = [
 ] as const;
 
 const DATE_FORMATS: Array<{label: string; value: DateFormat}> = [
-  {label: 'US', value: 'us'},
-  {label: 'EU', value: 'eu'},
+  {label: 'MDY', value: 'us'},
+  {label: 'DMY', value: 'eu'},
   {label: 'Med', value: 'medium'},
   {label: 'Long', value: 'long'},
   {label: 'ISO', value: 'iso'},
   {label: 'YMD', value: 'ymd'},
+  {label: 'Custom', value: 'custom'},
 ];
 
 type Position = 'bottom' | 'top-left' | 'top-right' | 'tap';
@@ -274,6 +276,7 @@ export const TEST_IDS = {
   italicBtn: 'datetime-italic',
   alignBtn: (value: number) => `datetime-align-${value}`,
   error: 'datetime-error',
+  customPattern: 'datetime-custom-pattern',
 } as const;
 
 export default function DateTimePicker({initialSettings = defaults, autoPlace = false, initialError = null}: {initialSettings?: StampSettings; autoPlace?: boolean; initialError?: string | null}) {
@@ -282,6 +285,7 @@ export default function DateTimePicker({initialSettings = defaults, autoPlace = 
   const [use24Hour, setUse24Hour] = useState(initialSettings.use24Hour);
   const [includeSeconds, setIncludeSeconds] = useState(initialSettings.includeSeconds);
   const [dateFormat, setDateFormat] = useState<DateFormat>(initialSettings.dateFormat);
+  const [customPattern, setCustomPattern] = useState(initialSettings.customPattern);
   const [position, setPosition] = useState<Position>(initialSettings.position);
   const [sizeLabel, setSizeLabel] = useState<FontSizeLabel>(initialSettings.sizeLabel);
   const [bold, setBold] = useState(initialSettings.bold);
@@ -313,10 +317,14 @@ export default function DateTimePicker({initialSettings = defaults, autoPlace = 
   const autoStarted = useRef(false);
   const [settingsVisible, setSettingsVisible] = useState(!autoPlace);
   const snapshot = (): StampSettings => ({selectedType, includeDayName, use24Hour, includeSeconds,
-    dateFormat, position, sizeLabel, bold, italic, align, addAsKeyword, quickPlacement, fontPath, customFontSize});
+    dateFormat, customPattern, position, sizeLabel, bold, italic, align, addAsKeyword, quickPlacement, fontPath, customFontSize});
   const handleSave = async () => {
     if (insertingRef.current || choosingFont) {return;}
     if (quickPlacement && !selectedType) {setError('Choose a stamp type first.'); return;}
+    if (dateFormat === 'custom') {
+      const patternError = validateCustomPattern(customPattern);
+      if (patternError) {setError(patternError); return;}
+    }
     insertingRef.current = true;
     try {await saveSettings(snapshot()); setSettingsVisible(false); PluginManager.closePluginView();}
     catch {setError('Could not save settings. Please try again.');}
@@ -342,6 +350,10 @@ export default function DateTimePicker({initialSettings = defaults, autoPlace = 
 
   const previewDate = useMemo(() => new Date(), []);
   const canIndexDate = selectedType !== 'time';
+  const previewStamp = (type: StampType) => {
+    try { return formatStamp(previewDate, type, includeDayName, use24Hour, dateFormat, includeSeconds, customPattern); }
+    catch { return 'Invalid custom pattern'; }
+  };
 
   const handleInsert = useCallback(async (quick = false, typeOverride?: StampType) => {
     const type = typeOverride ?? selectedType;
@@ -351,6 +363,10 @@ export default function DateTimePicker({initialSettings = defaults, autoPlace = 
     insertingRef.current = true;
     setError(null);
     try {
+      if (dateFormat === 'custom') {
+        const patternError = validateCustomPattern(customPattern);
+        if (patternError) { throw new Error(patternError); }
+      }
       if (!quick) {await saveSettings({...snapshot(), selectedType: type});}
       // The toolbar button is registered only for NOTE views. Do not use
       // canHandwrite here: while this popup is open, current preview firmware
@@ -403,6 +419,7 @@ export default function DateTimePicker({initialSettings = defaults, autoPlace = 
         use24Hour,
         dateFormat,
         includeSeconds,
+        customPattern,
       );
       await insertStamp(
         text,
@@ -452,6 +469,7 @@ export default function DateTimePicker({initialSettings = defaults, autoPlace = 
     use24Hour,
     includeSeconds,
     dateFormat,
+    customPattern,
     position,
     sizePreset,
     bold,
@@ -544,14 +562,7 @@ export default function DateTimePicker({initialSettings = defaults, autoPlace = 
                     bold && styles.previewBold,
                     italic && styles.previewItalic,
                   ]}>
-                  {formatStamp(
-                    previewDate,
-                    type,
-                    includeDayName,
-                    use24Hour,
-                    dateFormat,
-                    includeSeconds,
-                  )}
+                  {previewStamp(type)}
                 </Text>
               </Pressable>
             </React.Fragment>
@@ -574,14 +585,7 @@ export default function DateTimePicker({initialSettings = defaults, autoPlace = 
               bold && styles.previewBold,
               italic && styles.previewItalic,
             ]}>
-            {formatStamp(
-              previewDate,
-              'datetime',
-              includeDayName,
-              use24Hour,
-              dateFormat,
-              includeSeconds,
-            )}
+            {previewStamp('datetime')}
           </Text>
         </Pressable>
 
@@ -651,6 +655,31 @@ export default function DateTimePicker({initialSettings = defaults, autoPlace = 
               ))}
             </View>
           </View>
+
+          {dateFormat === 'custom' && (
+            <View style={styles.customFormatSection}>
+              <Text style={styles.customFormatLabel}>Custom date pattern</Text>
+              <TextInput
+                testID={TEST_IDS.customPattern}
+                value={customPattern}
+                onChangeText={setCustomPattern}
+                autoCapitalize="none"
+                autoCorrect={false}
+                maxLength={60}
+                placeholder="dd.MM.yy"
+                placeholderTextColor="#888888"
+                style={styles.customFormatInput}
+              />
+              <Text style={styles.customFormatPreview}>Preview: {previewStamp('date')}</Text>
+              <Text style={styles.customFormatHelp}>M MM MMM MMMM · d dd ddd dddd · yy yyyy</Text>
+              <Text style={styles.customFormatHelp}>Use any separator. Put words inside single quotes.</Text>
+              <Pressable
+                onPress={() => setCustomPattern(DEFAULT_CUSTOM_PATTERN)}
+                style={({pressed}) => [styles.customFormatReset, pressed && styles.chipBtnPressed]}>
+                <Text style={styles.customFormatResetText}>Reset to dd.MM.yy</Text>
+              </Pressable>
+            </View>
+          )}
 
           {/* Position chips — flex layout so "Top Left" / "Top Right" fit */}
           {SHOW_POSITION_PRESETS ? (
@@ -1072,12 +1101,18 @@ const styles = StyleSheet.create({
 
   // Date format row
   formatRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingHorizontal: PANEL_PADDING,
     paddingVertical: 10,
     gap: 12,
   },
+  customFormatSection: {paddingHorizontal: PANEL_PADDING, paddingBottom: 14},
+  customFormatLabel: {fontSize: 13, fontWeight: '700', color: '#555555', marginBottom: 6},
+  customFormatInput: {height: 44, borderWidth: 1.5, borderColor: '#000000', borderRadius: 6, paddingHorizontal: 12, fontSize: 18, color: '#000000', backgroundColor: '#FFFFFF'},
+  customFormatPreview: {fontSize: 16, fontWeight: 'bold', color: '#000000', marginTop: 8},
+  customFormatHelp: {fontSize: 12, color: '#666666', marginTop: 4},
+  customFormatReset: {alignSelf: 'flex-start', borderWidth: 1, borderColor: '#777777', borderRadius: 5, paddingHorizontal: 12, paddingVertical: 8, marginTop: 8},
+  customFormatResetText: {fontSize: 13, fontWeight: '600', color: '#000000'},
 
   // Position section — label stacked above flex chips
   positionSection: {
@@ -1145,6 +1180,7 @@ const styles = StyleSheet.create({
   },
   controlBtnRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 4,
   },
   chipBtn: {
